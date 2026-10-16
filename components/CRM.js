@@ -126,6 +126,7 @@ export default function CRM() {
       if (!live()) { bail(); return; }
       d.typingShow[f.id] = true; const t0 = Date.now(); rerender();
       const { res, r } = await req;
+      if (res.status === 401) { window.location.href = '/login?next=/dashboard'; return; }
       if (!res.ok || r.type === 'error') { stop(); scheduleRetry(f, r.busy ? 'AI is busy' : r.error || 'The reply failed'); return; }
       clearRetry(f);
       if (!live() || (!needsReply(f) && !newFanMsg())) { bail(); return; }
@@ -359,6 +360,7 @@ export default function CRM() {
       {navBtn('scripts')}{navBtn('creators')}
       <div className="spacer" />
       <button aria-label="Switch theme" onClick={toggleTheme}><Icon d={<><circle cx="12" cy="12" r="8" /><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" /></>} /><span>Theme</span></button>
+      <button aria-label="Log out" onClick={async () => { try { await fetch('/api/logout', { method: 'POST' }); } catch {} window.location.href = '/login'; }}><Icon d={<><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" /><path d="M10 17l-5-5 5-5M5 12h11" /></>} /><span>Log out</span></button>
     </nav>
   );
   const sheets = sheet && (

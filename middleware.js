@@ -1,15 +1,19 @@
 import { NextResponse } from 'next/server';
+import { COOKIE, tokenFor } from '@/lib/auth';
 
-// Optional password for a hosted demo. Set DEMO_PASSWORD in the host's settings (any username works).
-// Without DEMO_PASSWORD the app is open, which is fine on your own computer.
-export function middleware(req) {
+// The landing page and login page are public. The CRM (/dashboard) and its AI endpoints need the demo login,
+// but only when DEMO_PASSWORD is set, so local development stays open.
+export async function middleware(req) {
   const pass = process.env.DEMO_PASSWORD;
   if (!pass) return NextResponse.next();
-  const [scheme, b64] = (req.headers.get('authorization') || '').split(' ');
-  if (scheme === 'Basic' && b64) {
-    try { if (atob(b64).split(':').slice(1).join(':') === pass) return NextResponse.next(); } catch {}
-  }
-  return new NextResponse('Password required', { status: 401, headers: { 'WWW-Authenticate': 'Basic realm="CRM demo"' } });
+  const ok = req.cookies.get(COOKIE)?.value === (await tokenFor(pass));
+  if (ok) return NextResponse.next();
+  const { pathname, search } = req.nextUrl;
+  if (pathname.startsWith('/api/')) return NextResponse.json({ type: 'error', error: 'Please log in again.' }, { status: 401 });
+  const url = req.nextUrl.clone();
+  url.pathname = '/login';
+  url.search = `?next=${encodeURIComponent(pathname + search)}`;
+  return NextResponse.redirect(url);
 }
 
-export const config = { matcher: '/((?!_next/static|_next/image|favicon.ico).*)' };
+export const config = { matcher: ['/dashboard/:path*', '/api/reply', '/api/translate', '/api/memory'] };

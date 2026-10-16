@@ -1,5 +1,8 @@
-import CRM from '@/components/CRM';
+import Landing from '@/components/Landing';
+import './landing.css';
 
-export default function Page() {
-  return <CRM />;
+export const metadata = { title: 'Velvet · The AI chatter CRM for creator agencies' };
+
+export default function Home() {
+  return <Landing />;
 }
