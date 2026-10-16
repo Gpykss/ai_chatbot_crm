@@ -1074,23 +1074,21 @@ const SAMPLE_MSG = {
 const per1k = (m) => (m && (m.in || m.out) ? `$${(m.in * 2.7 + m.out * 0.12).toFixed(2)} / 1k replies` : '');
 
 function ModelsPage({ d, save, rerender, toast }) {
-  const [list, setList] = useState({ models: [], suggested: [], defaults: {}, error: '' });
+  const [list, setList] = useState({ suggested: [], defaults: {}, error: '' });
   const [loading, setLoading] = useState(true);
-  const [custom, setCustom] = useState({});
   const [lang, setLang] = useState('EL');
   const [msg, setMsg] = useState(SAMPLE_MSG.EL);
   const [picked, setPicked] = useState([]);
-  const [extra, setExtra] = useState('');
   const [runs, setRuns] = useState([]);
 
   useEffect(() => {
     fetch('/api/models').then((r) => r.json()).then((r) => {
-      setList({ models: r.models || [], suggested: r.suggested || [], defaults: r.defaults || {}, error: r.error || '' });
+      setList({ suggested: r.suggested || [], defaults: r.defaults || {}, error: r.error || '' });
       setPicked((r.suggested || []).slice(0, 4).map((m) => m.id));
     }).catch(() => setList((l) => ({ ...l, error: "Couldn't load the model list. You can still type a model ID." }))).finally(() => setLoading(false));
   }, []);
 
-  const byId = (id) => list.models.find((m) => m.id === id) || list.suggested.find((m) => m.id === id);
+  const byId = (id) => list.suggested.find((m) => m.id === id);
   const creatorFor = (l) => d.creators.find((c) => langsOf(c).includes(l)) || d.creators[0];
   const setModel = (l, id) => { d.models[l] = id; save(); rerender(); toast(id ? `${langName[l]} now uses ${id}` : `${langName[l]} uses the default model`); };
   const options = list.suggested;
@@ -1124,7 +1122,7 @@ function ModelsPage({ d, save, rerender, toast }) {
     <div className="pagein">
       <div className="pagehead">
         <div><p className="eyebrow">Admin</p><h1 className="ptitle">AI models</h1>
-          <p className="lede">Pick which AI writes each language, and test models side by side on the same message before switching. Changes apply to the next reply.</p></div>
+          <p className="lede">Pick which AI writes each language, and test models side by side on the same message before switching. Only hand-picked models that allow adult chat are listed. Changes apply to the next reply.</p></div>
       </div>
       {list.error && <div className="notice">{list.error}</div>}
 
@@ -1142,11 +1140,7 @@ function ModelsPage({ d, save, rerender, toast }) {
                   {options.map((m) => <option key={m.id} value={m.id}>{m.family} · {m.id}</option>)}
                   {!inList && <option value={cur}>{cur}</option>}
                 </select>
-                <span className="hint">{per1k(byId(cur || list.defaults[l]))}</span>
-                <div className="row" style={{ gap: 6 }}>
-                  <input aria-label={`Other model ID for ${langName[l]}`} placeholder="Or paste any OpenRouter model ID" value={custom[l] || ''} onChange={(e) => setCustom({ ...custom, [l]: e.target.value })} style={{ flex: 1, minWidth: 0 }} />
-                  <button className="btn sm" disabled={!custom[l]?.trim()} onClick={() => { setModel(l, custom[l].trim()); setCustom({ ...custom, [l]: '' }); }}>Use</button>
-                </div>
+                <span className="hint">{[byId(cur)?.note, per1k(byId(cur || list.defaults[l]))].filter(Boolean).join(' · ')}</span>
               </div>
             );
           })}
@@ -1164,23 +1158,20 @@ function ModelsPage({ d, save, rerender, toast }) {
         <div className="field"><span className="label">Models to test · {picked.length}/4</span>
           <div className="tags">
             {loading && <span className="small">Loading models…</span>}
-            {[...options.map((m) => m.id), ...picked.filter((id) => !options.some((m) => m.id === id))].map((id) => {
-              const on = picked.includes(id);
-              return <button key={id} className={`tag ${on ? 'fill' : ''}`} aria-pressed={on} style={{ cursor: 'pointer' }}
-                onClick={() => setPicked(on ? picked.filter((x) => x !== id) : picked.length < 4 ? [...picked, id] : picked)}>{id}</button>;
+            {options.map((m) => {
+              const on = picked.includes(m.id);
+              return <button key={m.id} className={`tag ${on ? 'fill' : ''}`} aria-pressed={on} title={m.note} style={{ cursor: 'pointer' }}
+                onClick={() => setPicked(on ? picked.filter((x) => x !== m.id) : picked.length < 4 ? [...picked, m.id] : picked)}>{m.family}</button>;
             })}
           </div>
-          <div className="row" style={{ gap: 6 }}>
-            <input aria-label="Add a model ID to test" placeholder="Add any OpenRouter model ID" value={extra} onChange={(e) => setExtra(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
-            <button className="btn sm" disabled={!extra.trim() || picked.length >= 4} onClick={() => { setPicked([...picked, extra.trim()]); setExtra(''); }}>Add</button>
-          </div>
+          <span className="hint">Tip: also test an explicit fan message. A model that refuses is not the one.</span>
         </div>
         <div><button className="btn primary" disabled={!picked.length || !msg.trim() || runs.some((r) => r.busy)} onClick={run}>{runs.some((r) => r.busy) ? 'Asking the models…' : 'Compare replies'}</button></div>
         {runs.length > 0 && (
           <div className="grid">
             {runs.map((r) => (
               <div key={r.id} className="card" style={{ background: 'var(--panel)', border: '1px solid var(--line)' }}>
-                <span className="label" style={{ textTransform: 'none', letterSpacing: 0 }}>{r.id}</span>
+                <span className="label" style={{ textTransform: 'none', letterSpacing: 0 }}>{byId(r.id)?.family || r.id}</span>
                 {r.busy && <span className="small">Writing…</span>}
                 {r.text && <div className="b me" style={{ maxWidth: '100%', alignSelf: 'stretch', whiteSpace: 'pre-wrap' }}>{r.text}</div>}
                 {r.error && <div className="notice">{r.error}</div>}
