@@ -28,11 +28,13 @@ export async function POST(req) {
 
   // If the fan's message matches another script (for example he asks a price), answer that first.
   // That replaces any storyline in progress.
-  const match = isMeetAsk(last) ? null : matchScript(last, fan, scripts, usedScripts);
+  // "compare" runs come from the AI models page: always the AI, never a script.
+  const compare = body.compare === true;
+  const match = compare || isMeetAsk(last) ? null : matchScript(last, fan, scripts, usedScripts);
   if (match) return stepReply(match.script, 0, fan, match.hit);
 
   // Otherwise a storyline in progress sends its next step.
-  if (story?.scriptId) {
+  if (!compare && story?.scriptId) {
     const s = scripts.find((x) => x.id === story.scriptId && x.enabled !== false);
     const next = (Number(story.step) || 0) + 1;
     if (s && s.steps[next] && !(fan.sub === 'expired' && Number(s.steps[next].price) > 0)) return stepReply(s, next, fan);
@@ -44,7 +46,7 @@ export async function POST(req) {
 
   const expired = fan.sub === 'expired';
   const canSell = !expired && canSellNow(history) && !isMeetAsk(last);
-  const model = pickModel(fan.lang);
+  const model = pickModel(fan.lang, body.model);
   const key = process.env.OPENROUTER_API_KEY;
 
   if (!key) {
@@ -67,11 +69,12 @@ export async function POST(req) {
   const payload = {
     ...(fallbacks.length ? { models: [model, ...fallbacks.filter((x) => x !== model)].slice(0, 3) } : { model }),
     messages: buildMessages(persona, fan, history, { canSell }), max_tokens: 200, temperature: 0.9,
+    usage: { include: true },
   };
 
   // Busy models answer 429. Wait and try again twice before giving up.
   // A reply that breaks a hard limit (agrees to meet, shares contact) is thrown away and written again.
-  let data, text, offer, tokensIn = 0, tokensOut = 0;
+  let data, text, offer, tokensIn = 0, tokensOut = 0, reportedCost = 0;
   for (let gen = 0; gen < 3; gen++) {
     let res;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -94,6 +97,7 @@ export async function POST(req) {
     data = await res.json();
     tokensIn += data.usage?.prompt_tokens || 0;
     tokensOut += data.usage?.completion_tokens || 0;
+    reportedCost += Number(data.usage?.cost) || 0;
     const raw = data.choices?.[0]?.message?.content?.trim() || '';
     ({ text, offer } = extractOffer(raw, canSell ? fresh : []));
     if (text && !checkReply(text)) break;
@@ -101,7 +105,7 @@ export async function POST(req) {
   }
   if (!text) return NextResponse.json({ type: 'error', error: 'The AI could not write a safe reply' }, { status: 502 });
 
-  const cost = (tokensIn * Number(process.env.PRICE_IN || 0.65) + tokensOut * Number(process.env.PRICE_OUT || 0.75)) / 1e6;
+  const cost = reportedCost || (tokensIn * Number(process.env.PRICE_IN || 0.65) + tokensOut * Number(process.env.PRICE_OUT || 0.75)) / 1e6;
 
   return NextResponse.json({ type: 'ai', model: data.model || model, text, offer, tokensIn, tokensOut, cost });
 }

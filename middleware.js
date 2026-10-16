@@ -16,4 +16,4 @@ export async function middleware(req) {
   return NextResponse.redirect(url);
 }
 
-export const config = { matcher: ['/dashboard/:path*', '/api/reply', '/api/translate', '/api/memory'] };
+export const config = { matcher: ['/dashboard/:path*', '/api/reply', '/api/translate', '/api/memory', '/api/models'] };

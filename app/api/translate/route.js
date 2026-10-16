@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { langName } from '@/lib/data';
-import { pickModel } from '@/lib/engine';
+import { pickModel, NATIVE } from '@/lib/engine';
 
 const clip = (v, n) => String(v ?? '').slice(0, n);
 
@@ -22,7 +22,7 @@ export async function POST(req) {
   const fallbacks = (process.env.MODEL_FALLBACKS || '').split(',').map((x) => x.trim()).filter(Boolean);
 
   const one = async (lang) => {
-    const model = pickModel(lang);
+    const model = pickModel(lang, body.models?.[lang]);
     const payload = {
       ...(fallbacks.length ? { models: [model, ...fallbacks.filter((x) => x !== model)].slice(0, 3) } : { model }),
       temperature: 0.4, max_tokens: 300,
@@ -31,6 +31,7 @@ export async function POST(req) {
           `You rewrite chat messages from ${name}, an adult content creator, for her fans who speak ${langName[lang]}.`,
           tone ? `Her voice: ${tone}` : '',
           `Rewrite the message in natural, casual ${langName[lang]}, the way a native speaker would text. Keep the meaning, flirtiness, emojis and length.`,
+          NATIVE[lang] ? `Write it the way a native speaker texts, never word for word. ${NATIVE[lang]}` : '',
           'Keep the placeholder {name} exactly as it is. Do not add anything new.',
           'Write only the rewritten message, with no notes or quotation marks.',
         ].filter(Boolean).join('\n') },

@@ -53,7 +53,8 @@ const icons = {
   creators: <Icon d={<><circle cx="12" cy="8" r="4" /><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" /></>} />,
 };
 icons.demo = <Icon d={<><rect x="6" y="2.5" width="12" height="19" rx="3" /><path d="M10 18.5h4" /></>} />;
-const navLabel = { inbox: 'Inbox', demo: 'Live demo', analytics: 'Analytics', scripts: 'Scripts', creators: 'Creators' };
+icons.models = <Icon d={<><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M9 9h6v6H9zM9 1.5v2.5M15 1.5v2.5M9 20v2.5M15 20v2.5M1.5 9H4M1.5 15H4M20 9h2.5M20 15h2.5" /></>} />;
+const navLabel = { inbox: 'Inbox', demo: 'Live demo', analytics: 'Analytics', scripts: 'Scripts', creators: 'Creators', models: 'AI models' };
 
 export default function CRM() {
   const [, setTick] = useState(0);
@@ -70,6 +71,7 @@ export default function CRM() {
   }
   const d = D.current;
   // Fill in anything added in a newer version, so a live code update never crashes an open page.
+  d.models ||= { EN: '', IT: '', FI: '', EL: '' };
   for (const k of ['paused', 'flagged', 'typing', 'typingShow', 'retry', 'learned', 'used', 'story', 'inIdx', 'mockIdx', 'sStats', 'vStats']) d[k] ||= {};
   d.fans.forEach((f) => { f.sub ||= 'active'; f.memory ||= []; });
   const cr = (id) => d.creators.find((c) => c.id === id);
@@ -89,7 +91,7 @@ export default function CRM() {
   const msgEnd = useRef(null);
 
   const toast = (t) => { setToastMsg(t); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToastMsg(''), 2200); };
-  function save() { try { localStorage.setItem(STORE, JSON.stringify({ creators: d.creators, scripts: d.scripts })); } catch {} }
+  function save() { try { localStorage.setItem(STORE, JSON.stringify({ creators: d.creators, scripts: d.scripts, models: d.models })); } catch {} }
 
   // Records a PPV/script send in the stats.
   function recordSend(f, scriptId, price) {
@@ -117,7 +119,7 @@ export default function CRM() {
           creator: { name: c.name, langs: langsOf(c), tone: c.tone, content: c.content, limits: c.limits, examples: c.examples || '', vault: c.vault || [] },
           scripts: d.scripts, story: d.story[f.id] || null, offered: f.msgs.filter((m) => m.vaultId).map((m) => m.vaultId),
           history: f.msgs.map((m) => ({ from: m.from, text: m.text, offer: !!m.price })),
-          usedScripts: d.used[f.id] || [], mockIndex: d.mockIdx[f.id] || 0,
+          usedScripts: d.used[f.id] || [], mockIndex: d.mockIdx[f.id] || 0, model: d.models[f.lang] || undefined,
         }),
       }).then(async (res) => ({ res, r: await res.json() }));
       req.catch(() => {});
@@ -195,7 +197,7 @@ export default function CRM() {
     let text = s.steps[0].text;
     if (s.lang !== f.lang) {
       try {
-        const r = await (await fetch('/api/translate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, from: s.lang, to: [f.lang], creator: { name: c.name, tone: c.tone } }) })).json();
+        const r = await (await fetch('/api/translate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, from: s.lang, to: [f.lang], creator: { name: c.name, tone: c.tone }, models: d.models }) })).json();
         text = r.versions?.[f.lang] || text;
       } catch {}
     }
@@ -267,6 +269,7 @@ export default function CRM() {
       const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
       if (saved?.creators?.length) d.creators = saved.creators.map((c) => (c.vault ? c : { ...c, vault: defaultCreators.find((x) => x.id === c.id)?.vault || [] }));
       if (Array.isArray(saved?.scripts)) d.scripts = saved.scripts.map(normalizeScript);
+      if (saved?.models && typeof saved.models === 'object') d.models = { ...d.models, ...saved.models };
     } catch {}
     rerender();
     runAll();
@@ -357,7 +360,7 @@ export default function CRM() {
       <div className="logo" aria-hidden="true">V</div>
       {navBtn('inbox')}{navBtn('demo')}{navBtn('analytics')}
       <span className="navgroup">Admin</span>
-      {navBtn('scripts')}{navBtn('creators')}
+      {navBtn('scripts')}{navBtn('creators')}{navBtn('models')}
       <div className="spacer" />
       <button aria-label="Switch theme" onClick={toggleTheme}><Icon d={<><circle cx="12" cy="12" r="8" /><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" /></>} /><span>Theme</span></button>
       <button aria-label="Log out" onClick={async () => { try { await fetch('/api/logout', { method: 'POST' }); } catch {} window.location.href = '/login'; }}><Icon d={<><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" /><path d="M10 17l-5-5 5-5M5 12h11" /></>} /><span>Log out</span></button>
@@ -382,6 +385,7 @@ export default function CRM() {
           {view === 'creators' && <Creators d={d} onConnect={() => setSheet({ kind: 'connect' })} onEdit={(c) => setSheet({ kind: 'creator', item: c })}
             onToggle={(c) => { c.autopilot = c.autopilot === false; save(); rerender(); if (c.autopilot) runAll(); }} onReset={resetDemo} />}
           {view === 'analytics' && <Analytics d={d} sStat={sStat} />}
+          {view === 'models' && <ModelsPage d={d} save={save} rerender={rerender} toast={toast} />}
           {view === 'demo' && <LiveDemo d={d} cr={cr} autoReply={autoReply} buy={buy} rerender={rerender} newSubscriber={newSubscriber} />}
         </section>
         {sheets}{toastEl}
@@ -596,7 +600,7 @@ function MassSheet({ d, cr, start, onSend, onClose }) {
     if (!needs.length) return onSend({ creator, recipients, mode, scriptId, versions: { [srcLang]: srcText }, srcLang, price: srcPrice });
     setBusy(true); setErr('');
     try {
-      const res = await fetch('/api/translate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: srcText, from: srcLang, to: needs, creator: { name: c.name, tone: c.tone } }) });
+      const res = await fetch('/api/translate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: srcText, from: srcLang, to: needs, creator: { name: c.name, tone: c.tone }, models: d.models }) });
       const r = await res.json();
       if (!res.ok) throw new Error(r.error || 'Translation failed');
       const v = { [srcLang]: srcText, ...r.versions };
@@ -1055,6 +1059,138 @@ function FanMemory({ fan, d, rerender }) {
         <button className="btn sm" type="submit" disabled={!add.trim()}>Add</button>
       </form>
       <span className="small">Saved from the chat automatically. The AI won&apos;t ask about these again and brings them up naturally.</span>
+    </div>
+  );
+}
+
+/* ---------------- AI models: pick and compare ---------------- */
+const SAMPLE_MSG = {
+  EN: 'hey gorgeous, what are you up to tonight? 😍',
+  IT: 'ciao bella, cosa fai stasera? 😍',
+  FI: 'moi kaunis, mitä teet tänä iltana? 😍',
+  EL: 'γεια σου κούκλα, τι κάνεις απόψε; 😍',
+};
+// Rough cost per 1,000 replies: ~2,700 tokens in and ~120 out per reply.
+const per1k = (m) => (m && (m.in || m.out) ? `$${(m.in * 2.7 + m.out * 0.12).toFixed(2)} / 1k replies` : '');
+
+function ModelsPage({ d, save, rerender, toast }) {
+  const [list, setList] = useState({ models: [], suggested: [], defaults: {}, error: '' });
+  const [loading, setLoading] = useState(true);
+  const [custom, setCustom] = useState({});
+  const [lang, setLang] = useState('EL');
+  const [msg, setMsg] = useState(SAMPLE_MSG.EL);
+  const [picked, setPicked] = useState([]);
+  const [extra, setExtra] = useState('');
+  const [runs, setRuns] = useState([]);
+
+  useEffect(() => {
+    fetch('/api/models').then((r) => r.json()).then((r) => {
+      setList({ models: r.models || [], suggested: r.suggested || [], defaults: r.defaults || {}, error: r.error || '' });
+      setPicked((r.suggested || []).slice(0, 4).map((m) => m.id));
+    }).catch(() => setList((l) => ({ ...l, error: "Couldn't load the model list. You can still type a model ID." }))).finally(() => setLoading(false));
+  }, []);
+
+  const byId = (id) => list.models.find((m) => m.id === id) || list.suggested.find((m) => m.id === id);
+  const creatorFor = (l) => d.creators.find((c) => langsOf(c).includes(l)) || d.creators[0];
+  const setModel = (l, id) => { d.models[l] = id; save(); rerender(); toast(id ? `${langName[l]} now uses ${id}` : `${langName[l]} uses the default model`); };
+  const options = list.suggested;
+
+  async function run() {
+    const ids = [...new Set(picked)].slice(0, 4);
+    if (!ids.length || !msg.trim()) return;
+    const c = creatorFor(lang);
+    const fanName = { EN: 'Jake', IT: 'Marco', FI: 'Mikko', EL: 'Nikos' }[lang];
+    setRuns(ids.map((id) => ({ id, busy: true })));
+    await Promise.all(ids.map(async (id, i) => {
+      const t0 = Date.now();
+      let out;
+      try {
+        const res = await fetch('/api/reply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+          compare: true, model: id,
+          fan: { id: 'compare', name: fanName, lang, creator: c.id, notes: '', tags: [], spend: 120, sub: 'active', memory: [] },
+          creator: { name: c.name, langs: langsOf(c).includes(lang) ? langsOf(c) : [lang, ...langsOf(c)], tone: c.tone, content: c.content, limits: c.limits, examples: c.examples || '', vault: [] },
+          scripts: [], history: [{ from: 'fan', text: msg.trim(), offer: false }],
+        }) });
+        const r = await res.json();
+        out = r.type === 'ai' ? { id, text: r.text, cost: r.cost, ms: Date.now() - t0, mock: r.mock, used: r.model }
+          : { id, error: r.type === 'flag' ? `Blocked by a safety check: ${r.flag}` : r.error || 'No reply' };
+      } catch { out = { id, error: 'Could not reach the server' }; }
+      setRuns((prev) => prev.map((x, j) => (j === i ? out : x)));
+    }));
+  }
+
+  const langs = ['EN', 'IT', 'FI', 'EL'];
+  return (
+    <div className="pagein">
+      <div className="pagehead">
+        <div><p className="eyebrow">Admin</p><h1 className="ptitle">AI models</h1>
+          <p className="lede">Pick which AI writes each language, and test models side by side on the same message before switching. Changes apply to the next reply.</p></div>
+      </div>
+      {list.error && <div className="notice">{list.error}</div>}
+
+      <div className="card">
+        <h3>Model per language</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
+          {langs.map((l) => {
+            const cur = d.models[l] || '';
+            const inList = !cur || options.some((m) => m.id === cur);
+            return (
+              <div key={l} className="field">
+                <label className="label" htmlFor={`m-${l}`}>{langName[l]}</label>
+                <select id={`m-${l}`} value={cur} onChange={(e) => setModel(l, e.target.value)}>
+                  <option value="">Default · {list.defaults[l] || 'from .env.local'}</option>
+                  {options.map((m) => <option key={m.id} value={m.id}>{m.family} · {m.id}</option>)}
+                  {!inList && <option value={cur}>{cur}</option>}
+                </select>
+                <span className="hint">{per1k(byId(cur || list.defaults[l]))}</span>
+                <div className="row" style={{ gap: 6 }}>
+                  <input aria-label={`Other model ID for ${langName[l]}`} placeholder="Or paste any OpenRouter model ID" value={custom[l] || ''} onChange={(e) => setCustom({ ...custom, [l]: e.target.value })} style={{ flex: 1, minWidth: 0 }} />
+                  <button className="btn sm" disabled={!custom[l]?.trim()} onClick={() => { setModel(l, custom[l].trim()); setCustom({ ...custom, [l]: '' }); }}>Use</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="card">
+        <h3>Compare models</h3>
+        <span className="small">Send the same fan message to up to 4 models at once and read the replies side by side. Each test uses a little AI credit.</span>
+        <div className="seg" role="group" aria-label="Language to test" style={{ maxWidth: 420 }}>
+          {langs.map((l) => <button key={l} aria-pressed={lang === l} onClick={() => { setLang(l); setMsg(SAMPLE_MSG[l]); setRuns([]); }}>{langName[l]}</button>)}
+        </div>
+        <div className="field"><label className="label" htmlFor="cmp-msg">Fan message · to {creatorFor(lang)?.name}</label>
+          <textarea id="cmp-msg" rows={2} value={msg} onChange={(e) => setMsg(e.target.value)} /></div>
+        <div className="field"><span className="label">Models to test · {picked.length}/4</span>
+          <div className="tags">
+            {loading && <span className="small">Loading models…</span>}
+            {[...options.map((m) => m.id), ...picked.filter((id) => !options.some((m) => m.id === id))].map((id) => {
+              const on = picked.includes(id);
+              return <button key={id} className={`tag ${on ? 'fill' : ''}`} aria-pressed={on} style={{ cursor: 'pointer' }}
+                onClick={() => setPicked(on ? picked.filter((x) => x !== id) : picked.length < 4 ? [...picked, id] : picked)}>{id}</button>;
+            })}
+          </div>
+          <div className="row" style={{ gap: 6 }}>
+            <input aria-label="Add a model ID to test" placeholder="Add any OpenRouter model ID" value={extra} onChange={(e) => setExtra(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
+            <button className="btn sm" disabled={!extra.trim() || picked.length >= 4} onClick={() => { setPicked([...picked, extra.trim()]); setExtra(''); }}>Add</button>
+          </div>
+        </div>
+        <div><button className="btn primary" disabled={!picked.length || !msg.trim() || runs.some((r) => r.busy)} onClick={run}>{runs.some((r) => r.busy) ? 'Asking the models…' : 'Compare replies'}</button></div>
+        {runs.length > 0 && (
+          <div className="grid">
+            {runs.map((r) => (
+              <div key={r.id} className="card" style={{ background: 'var(--panel)', border: '1px solid var(--line)' }}>
+                <span className="label" style={{ textTransform: 'none', letterSpacing: 0 }}>{r.id}</span>
+                {r.busy && <span className="small">Writing…</span>}
+                {r.text && <div className="b me" style={{ maxWidth: '100%', alignSelf: 'stretch', whiteSpace: 'pre-wrap' }}>{r.text}</div>}
+                {r.error && <div className="notice">{r.error}</div>}
+                {r.text && <span className="small">{(r.ms / 1000).toFixed(1)}s{r.cost ? ` · $${r.cost.toFixed(4)}` : ''}{r.mock ? ' · sample reply (no API key)' : ''}</span>}
+                {r.text && <div><button className="btn sm" onClick={() => setModel(lang, r.id)}>{d.models[lang] === r.id ? `In use for ${langName[lang]}` : `Use for ${langName[lang]}`}</button></div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
