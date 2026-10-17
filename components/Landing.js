@@ -35,8 +35,9 @@ export default function Landing() {
   const [step, setStep] = useState(0);
   const [autoOn, setAutoOn] = useState(true);
   const [mem, setMem] = useState(0);
-  const [n, setN] = useState(20);
+  const [n, setN] = useState(5);
   const [open, setOpen] = useState(0);
+  const [aiModel, setAiModel] = useState('grok');
 
   useEffect(() => {
     if (!autoOn) return undefined;
@@ -49,8 +50,10 @@ export default function Landing() {
   const typing = TYPING[step] && autoOn;
 
   const ofapi = n <= 5 ? 299 : 299 + (n - 5) * 29;
-  const ai = n * 21.25;
-  const railway = n <= 4 ? 10 : 20;
+  // ~375 AI replies per creator a day; cost per 1,000 replies from OpenRouter prices, Oct 2026.
+  const per1k = aiModel === 'grok' ? 6.12 : 1.85;
+  const ai = n * 375 * 30 * per1k / 1000;
+  const railway = n <= 5 ? 10 : 20;
   const total = ofapi + ai + 25 + 20 + railway;
 
   return (
@@ -245,6 +248,10 @@ export default function Landing() {
                 <span className="l-num" style={{ fontSize: 40 }}>{n}</span>
               </div>
               <input id="creators" type="range" min="1" max="50" step="1" value={n} onChange={(e) => setN(Number(e.target.value) || 1)} />
+              <div role="group" aria-label="AI model" className="l-tabs" style={{ alignSelf: 'flex-start' }}>
+                <button type="button" className="l-tab" aria-pressed={aiModel === 'grok'} onClick={() => setAiModel('grok')}>Grok</button>
+                <button type="button" className="l-tab" aria-pressed={aiModel === 'budget'} onClick={() => setAiModel('budget')}>Budget model</button>
+              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {[
                   ['Account connection (OnlyFansAPI)', money(ofapi)],

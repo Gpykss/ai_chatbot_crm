@@ -116,7 +116,7 @@ export default function CRM() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fan: { id: f.id, name: f.name, lang: f.lang, creator: f.creator, notes: f.notes, tags: f.tags, spend: f.spend, sub: f.sub, memory: (f.memory || []).map((x) => x.text) },
-          creator: { name: c.name, langs: langsOf(c), tone: c.tone, content: c.content, limits: c.limits, examples: c.examples || '', vault: c.vault || [] },
+          creator: { meetPolicy: c.meetPolicy || 'no', meetAnswer: c.meetAnswer || '', name: c.name, langs: langsOf(c), tone: c.tone, content: c.content, limits: c.limits, examples: c.examples || '', vault: c.vault || [] },
           scripts: d.scripts, story: d.story[f.id] || null, offered: f.msgs.filter((m) => m.vaultId).map((m) => m.vaultId),
           history: f.msgs.map((m) => ({ from: m.from, text: m.text, offer: !!m.price })),
           usedScripts: d.used[f.id] || [], mockIndex: d.mockIdx[f.id] || 0, model: d.models[f.lang] || undefined,
@@ -161,6 +161,7 @@ export default function CRM() {
         if (r.step + 1 < r.total) d.story[f.id] = { scriptId: r.scriptId, step: r.step }; else delete d.story[f.id];
         recordSend(f, r.step === 0 ? r.scriptId : null, r.price);
       } else {
+        if (r.storyEnded) delete d.story[f.id];
         f.msgs.push({ from: 'me', text: r.text, time: now(), src: 'ai', cost: r.cost, ...(r.offer ? { price: r.offer.price, vaultId: r.offer.id, vaultTitle: `${r.offer.title} · ${r.offer.type}` } : {}) });
         if (r.offer) recordSend(f, null, r.offer.price);
         d.stats.ai++; p.ai++; d.stats.tokensIn += r.tokensIn || 0; d.stats.tokensOut += r.tokensOut || 0; d.stats.cost += r.cost || 0;
@@ -409,11 +410,6 @@ export default function CRM() {
             <span className="row"><span className="dot" style={{ background: d.autopilot ? 'var(--ok)' : 'var(--faint)' }} />{d.autopilot ? 'Autopilot on' : 'Autopilot paused'}</span>
             <span className="sub">{d.autopilot ? 'Pause all' : 'Resume'}</span>
           </button>
-          <div className="seg" role="group" aria-label="Account">
-            {['all', 'owner', 'partner'].map((w) => (
-              <button key={w} aria-pressed={ws === w} onClick={() => { setWs(w); setCrFilter('all'); }}>{w === 'all' ? 'All accounts' : workspaces[w]}</button>
-            ))}
-          </div>
           <select id="crSel" aria-label="Creator" value={crFilter} onChange={(e) => setCrFilter(e.target.value)}>
             <option value="all">All creators ({crOpts.length})</option>
             {crOpts.map((c) => <option key={c.id} value={c.id}>{c.name} · {langsOf(c).join('/')}</option>)}
@@ -794,7 +790,7 @@ function Creators({ d, onConnect, onEdit, onToggle, onReset }) {
       <div className="grid">
         {d.creators.map((c) => (
           <article key={c.id} className={`card ${c.autopilot === false ? 'off' : ''}`}>
-            <div className="row"><span className="av">{c.name[0]}</span><div style={{ minWidth: 0 }}><h3>{c.name}</h3><span className="sub">{c.handle} · {workspaces[c.ws]}&apos;s account</span></div></div>
+            <div className="row"><span className="av">{c.name[0]}</span><div style={{ minWidth: 0 }}><h3>{c.name}</h3><span className="sub">{c.handle}</span></div></div>
             <dl className="kv"><dt>Speaks</dt><dd>{langsOf(c).map((l) => langName[l]).join(', ')}</dd><dt>Subscribers</dt><dd className="mono">{(c.subs || 0).toLocaleString()}</dd><dt>Chats</dt><dd className="mono">{d.fans.filter((f) => f.creator === c.id).length}</dd></dl>
             <div><div className="label">Voice</div><div className="small" style={{ whiteSpace: 'pre-line' }}>{c.tone || 'Not set'}</div></div>
             <div><div className="label">Sells</div><div className="small" style={{ whiteSpace: 'pre-line' }}>{c.content || 'Not set'}</div></div>
@@ -831,8 +827,6 @@ function ConnectSheet({ taken, onNext, onClose }) {
             </button>
           ))}
         </div>
-        <div className="field"><span className="label">Account</span>
-          <div className="seg" role="group" aria-label="Account">{['owner', 'partner'].map((w) => <button key={w} type="button" aria-pressed={wsel === w} onClick={() => setWsel(w)}>{workspaces[w]}</button>)}</div></div>
       </div>
       <div className="sheetfoot"><span /><button className="btn primary" disabled={!pick}
         onClick={() => pick && onNext({ id: uid('c'), name: pick.name, handle: pick.handle, subs: pick.subs, ws: wsel, langs: ['EN'], tone: '', content: '', limits: '', examples: '', vault: [], autopilot: true })}>Next: write persona</button></div>
@@ -856,7 +850,7 @@ function CreatorSheet({ item, onSave, onRemove, onClose }) {
     if (/\[[^\]]+\]/.test(`${f.tone}${f.content}${f.limits}${f.examples}`)) return setErr('Some template parts in [brackets] are still unfilled. Replace or delete them.');
     if (!f.tone.trim()) return setErr('Describe her voice so the AI knows how to talk.');
     if (!f.content.trim()) return setErr('List what she sells, so the AI never offers content she doesn’t have.');
-    if (f.vault.some((x) => !x.title.trim() || !x.desc.trim())) return setErr('Every vault item needs a title and a description, or remove it.');
+    if (f.vault.some((x) => !x.title.trim())) return setErr('Every vault item needs a title, or remove it.');
     onSave({ ...f, name: f.name.trim(), vault: f.vault.map((x) => ({ ...x, title: x.title.trim(), desc: x.desc.trim(), price: Number(x.price) || 0 })) });
   }
   return (
@@ -878,6 +872,13 @@ function CreatorSheet({ item, onSave, onRemove, onClose }) {
           <span className="hint">The AI only offers what&apos;s listed here, at these prices.</span></div>
         <div className="field"><label className="label" htmlFor="c-lim">Hard limits</label><textarea id="c-lim" rows={3} value={f.limits} onChange={set('limits')} placeholder="No face in customs. No meetups." />
           <span className="hint">Things she never does or says. Meetups, under-18 talk and sharing location are always blocked, on top of these.</span></div>
+        <div className="field"><label className="label" htmlFor="c-meet">Meetups</label>
+          <select id="c-meet" value={f.meetPolicy || 'no'} onChange={set('meetPolicy')}>
+            <option value="no">No, she doesn&apos;t meet fans</option>
+            <option value="yes">Yes, reply with the answer below</option>
+          </select>
+          {f.meetPolicy === 'yes' && <textarea aria-label="What to tell a fan who asks to meet" rows={2} value={f.meetAnswer || ''} onChange={set('meetAnswer')} placeholder="Yes babe, but message me on Telegram first: @yourhandle" />}
+          <span className="hint">When a fan asks to meet, the AI answers straight away with this, in his language. {f.meetPolicy === 'yes' ? 'OnlyFans’ rules don’t allow sending fans to other apps, so this can get the account flagged.' : ''}</span></div>
         <div className="field"><div className="row between"><span className="label">Content vault · {f.vault.length}</span><button type="button" className="btn sm" onClick={addItem}>Add item</button></div>
           <span className="hint">Her ready-made content, newest first. The AI only sells what&apos;s here and describes it from your description, since it can&apos;t see the media. In the full build this syncs from her OnlyFans vault.</span>
           {f.vault.map((x, i) => (
@@ -1106,7 +1107,7 @@ function ModelsPage({ d, save, rerender, toast }) {
         const res = await fetch('/api/reply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
           compare: true, model: id,
           fan: { id: 'compare', name: fanName, lang, creator: c.id, notes: '', tags: [], spend: 120, sub: 'active', memory: [] },
-          creator: { name: c.name, langs: langsOf(c).includes(lang) ? langsOf(c) : [lang, ...langsOf(c)], tone: c.tone, content: c.content, limits: c.limits, examples: c.examples || '', vault: [] },
+          creator: { meetPolicy: c.meetPolicy || 'no', meetAnswer: c.meetAnswer || '', name: c.name, langs: langsOf(c).includes(lang) ? langsOf(c) : [lang, ...langsOf(c)], tone: c.tone, content: c.content, limits: c.limits, examples: c.examples || '', vault: [] },
           scripts: [], history: [{ from: 'fan', text: msg.trim(), offer: false }],
         }) });
         const r = await res.json();

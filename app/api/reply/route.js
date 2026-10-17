@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { creators as defaultCreators, scripts as defaultScripts, mockReplies, normalizeScript } from '@/lib/data';
-import { canSellNow, isMeetAsk, countMeetAsks, checkGuard, checkReply, matchScript, fillScript, pickModel, buildMessages, extractOffer } from '@/lib/engine';
+import { canSellNow, isYesToStory, isContentAsk, isMeetAsk, countMeetAsks, checkGuard, checkReply, matchScript, fillScript, pickModel, buildMessages, extractOffer } from '@/lib/engine';
 
 const clip = (v, n) => String(v ?? '').slice(0, n);
 
@@ -15,7 +15,7 @@ export async function POST(req) {
   const sent = body.creator;
   const base = defaultCreators.find((c) => c.id === fan?.creator);
   const creator = sent
-    ? { name: clip(sent.name, 80), langs: Array.isArray(sent.langs) ? sent.langs.filter((l) => ['EN', 'IT', 'FI', 'EL'].includes(l)) : [], tone: clip(sent.tone, 600), content: clip(sent.content, 600), limits: clip(sent.limits, 600), examples: clip(sent.examples, 2000),
+    ? { meetPolicy: sent.meetPolicy === 'yes' ? 'yes' : 'no', meetAnswer: clip(sent.meetAnswer, 300).trim(), name: clip(sent.name, 80), langs: Array.isArray(sent.langs) ? sent.langs.filter((l) => ['EN', 'IT', 'FI', 'EL'].includes(l)) : [], tone: clip(sent.tone, 600), content: clip(sent.content, 600), limits: clip(sent.limits, 600), examples: clip(sent.examples, 2000),
         vault: (Array.isArray(sent.vault) ? sent.vault : []).slice(0, 30).map((x) => ({ id: clip(x.id, 40), title: clip(x.title, 80), type: clip(x.type, 40), price: Number(x.price) || 0, added: clip(x.added, 20), desc: clip(x.desc, 300) })) }
     : base;
   if (!creator) return NextResponse.json({ type: 'error', error: 'Unknown creator' }, { status: 400 });
@@ -34,10 +34,14 @@ export async function POST(req) {
   if (match) return stepReply(match.script, 0, fan, match.hit);
 
   // Otherwise a storyline in progress sends its next step.
+  // A storyline goes on only if he says yes to it; otherwise the AI answers what he actually said
+  // and the storyline ends (storyEnded tells the dashboard).
+  let storyEnded = false;
   if (!compare && story?.scriptId) {
     const s = scripts.find((x) => x.id === story.scriptId && x.enabled !== false);
     const next = (Number(story.step) || 0) + 1;
-    if (s && s.steps[next] && !(fan.sub === 'expired' && Number(s.steps[next].price) > 0)) return stepReply(s, next, fan);
+    if (s && s.steps[next] && isYesToStory(last) && !(fan.sub === 'expired' && Number(s.steps[next].price) > 0)) return stepReply(s, next, fan);
+    storyEnded = true;
   }
 
   // Items this fan already got offered or bought are left out, so he is not pitched the same thing twice.
@@ -45,23 +49,27 @@ export async function POST(req) {
   const persona = { ...creator, vault: fresh };
 
   const expired = fan.sub === 'expired';
+  const allowMeet = creator.meetPolicy === 'yes' && !!creator.meetAnswer;
   const canSell = !expired && canSellNow(history) && !isMeetAsk(last);
   const model = pickModel(fan.lang, body.model);
   const key = process.env.OPENROUTER_API_KEY;
 
   if (!key) {
     const pool = mockReplies[fan.lang] || mockReplies.EN;
+    if (isMeetAsk(last) && allowMeet) {
+      return NextResponse.json({ type: 'ai', storyEnded, mock: true, model, text: creator.meetAnswer, offer: null, tokensIn: 0, tokensOut: 0, cost: 0 });
+    }
     if (isMeetAsk(last)) {
       const meetPool = mockMeet[fan.lang] || mockMeet.EN;
-      return NextResponse.json({ type: 'ai', mock: true, model, text: fillScript(meetPool[(countMeetAsks(history) - 1) % meetPool.length], fan), offer: null, tokensIn: 0, tokensOut: 0, cost: 0 });
+      return NextResponse.json({ type: 'ai', storyEnded, mock: true, model, text: fillScript(meetPool[(countMeetAsks(history) - 1) % meetPool.length], fan), offer: null, tokensIn: 0, tokensOut: 0, cost: 0 });
     }
-    if (expired && /new|content|video|pic|photo|nuovo|uusi|καινούρ|βίντεο/i.test(last)) {
-      return NextResponse.json({ type: 'ai', mock: true, model, text: fillScript("I've been posting so much lately {name} 🙈 it's all waiting for you, renew and come see? I miss you here 💕", fan), offer: null, tokensIn: 0, tokensOut: 0, cost: 0 });
+    if (expired && isContentAsk(last)) {
+      return NextResponse.json({ type: 'ai', storyEnded, mock: true, model, text: fillScript("I've been posting so much lately {name} 🙈 it's all waiting for you, renew and come see? I miss you here 💕", fan), offer: null, tokensIn: 0, tokensOut: 0, cost: 0 });
     }
-    const wantsContent = /new|content|video|pic|photo|nuovo|uusi|καινούρ|βίντεο/i.test(last);
+    const wantsContent = isContentAsk(last);
     const item = wantsContent && canSell ? fresh[0] : null;
     const text = item ? `I just put up something you'll love {name}… ${item.title.toLowerCase()} 🙈` : pool[mockIndex % pool.length];
-    return NextResponse.json({ type: 'ai', mock: true, model, text: fillScript(text, fan), offer: item ? { id: item.id, title: item.title, type: item.type, price: Number(item.price) || 0 } : null, tokensIn: 0, tokensOut: 0, cost: 0 });
+    return NextResponse.json({ type: 'ai', storyEnded, mock: true, model, text: fillScript(text, fan), offer: item ? { id: item.id, title: item.title, type: item.type, price: Number(item.price) || 0 } : null, tokensIn: 0, tokensOut: 0, cost: 0 });
   }
 
   // Backup models (MODEL_FALLBACKS in .env.local) are tried by OpenRouter if the main one is busy or down.
@@ -100,22 +108,22 @@ export async function POST(req) {
     reportedCost += Number(data.usage?.cost) || 0;
     const raw = data.choices?.[0]?.message?.content?.trim() || '';
     ({ text, offer } = extractOffer(raw, canSell ? fresh : []));
-    if (text && !checkReply(text)) break;
+    if (text && !checkReply(text, { allowMeet: allowMeet && isMeetAsk(last) })) break;
     text = '';
   }
   if (!text) return NextResponse.json({ type: 'error', error: 'The AI could not write a safe reply' }, { status: 502 });
 
   const cost = reportedCost || (tokensIn * Number(process.env.PRICE_IN || 0.65) + tokensOut * Number(process.env.PRICE_OUT || 0.75)) / 1e6;
 
-  return NextResponse.json({ type: 'ai', model: data.model || model, text, offer, tokensIn, tokensOut, cost });
+  return NextResponse.json({ type: 'ai', storyEnded, model: data.model || model, text, offer, tokensIn, tokensOut, cost });
 }
 
 // Demo replies to "can we meet?" when no OpenRouter key is set.
 const mockMeet = {
-  EN: ["Haha you're making me blush {name} 🙈 I keep my real life super private, but honestly this chat is where I'm the most me. tell me what you'd want to do if we were hanging out?", "You really don't give up huh 😏 I love that you want more of me… so you get the side of me nobody else sees, right here. what's on your mind tonight?"],
-  IT: ['Mi fai arrossire {name} 🙈 la mia vita privata la tengo per me, ma qui con te sono davvero me stessa. raccontami, cosa faremmo insieme?'],
-  FI: ['Haha sä saat mut punastumaan {name} 🙈 pidän mun oman elämän tosi yksityisenä, mut täällä sun kanssa mä oon eniten oma itteni. mitä me tehtäis yhdessä?'],
-  EL: ['Με κάνεις να κοκκινίζω {name} 🙈 την προσωπική μου ζωή την κρατάω για μένα, αλλά εδώ μαζί σου είμαι ο πιο αληθινός εαυτός μου. πες μου, τι θα κάναμε μαζί;'],
+  EN: ["Aww no babe, I don't meet fans in person 🙈 but I love that you want to… you get the real me right here 💕", "Still no meeting in person {name}, I promise it's not you 😘 nobody gets more of me than you do in here"],
+  IT: ['No amore, non incontro i fan di persona 🙈 ma qui hai la vera me, sempre 💕'],
+  FI: ['En valitettavasti tapaa faneja livenä {name} 🙈 mut täällä saat aidon mut 💕'],
+  EL: ['Όχι μωρό μου, δεν συναντάω fans από κοντά 🙈 αλλά εδώ με έχεις όλη δική σου 💕'],
 };
 
 function stepReply(s, i, fan, hit) {
