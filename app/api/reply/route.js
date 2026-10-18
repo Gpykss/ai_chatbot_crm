@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { creators as defaultCreators, scripts as defaultScripts, mockReplies, normalizeScript } from '@/lib/data';
-import { canSellNow, isYesToStory, isContentAsk, isMeetAsk, countMeetAsks, checkGuard, checkReply, matchScript, fillScript, pickModel, buildMessages, extractOffer } from '@/lib/engine';
+import { buildMeetMessages, canSellNow, isYesToStory, isContentAsk, isMeetAsk, countMeetAsks, checkGuard, checkReply, matchScript, fillScript, pickModel, buildMessages, extractOffer } from '@/lib/engine';
 
 const clip = (v, n) => String(v ?? '').slice(0, n);
 
@@ -76,7 +76,9 @@ export async function POST(req) {
   const fallbacks = (process.env.MODEL_FALLBACKS || '').split(',').map((x) => x.trim()).filter(Boolean);
   const payload = {
     ...(fallbacks.length ? { models: [model, ...fallbacks.filter((x) => x !== model)].slice(0, 3) } : { model }),
-    messages: buildMessages(persona, fan, history, { canSell }), max_tokens: 200, temperature: 0.9,
+    ...(isMeetAsk(last)
+      ? { messages: buildMeetMessages(persona, fan, history), max_tokens: 120, temperature: 0.6 }
+      : { messages: buildMessages(persona, fan, history, { canSell }), max_tokens: 200, temperature: 0.8 }),
     usage: { include: true },
   };
 
