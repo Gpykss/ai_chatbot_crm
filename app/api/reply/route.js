@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { creators as defaultCreators, scripts as defaultScripts, mockReplies, normalizeScript } from '@/lib/data';
-import { buildMeetMessages, canSellNow, isYesToStory, isContentAsk, isMeetAsk, countMeetAsks, checkGuard, checkReply, matchScript, fillScript, pickModel, buildMessages, extractOffer } from '@/lib/engine';
+import { pendingFan, buildMeetMessages, canSellNow, isYesToStory, isContentAsk, isMeetAsk, countMeetAsks, checkGuard, checkReply, matchScript, fillScript, pickModel, buildMessages, extractOffer } from '@/lib/engine';
 
 const clip = (v, n) => String(v ?? '').slice(0, n);
 
@@ -23,14 +23,18 @@ export async function POST(req) {
   const scripts = (Array.isArray(body.scripts) ? body.scripts.slice(0, 500) : defaultScripts).map(normalizeScript);
   const last = history[history.length - 1]?.text || '';
 
-  const flag = checkGuard(last);
+  const pending = pendingFan(history);
+  const anyMeet = pending.some(isMeetAsk);
+  // Only one message and it's about meeting: the focused meetup request handles it.
+  const meetOnly = anyMeet && pending.length === 1;
+  const flag = pending.map(checkGuard).find(Boolean);
   if (flag) return NextResponse.json({ type: 'flag', flag });
 
   // If the fan's message matches another script (for example he asks a price), answer that first.
   // That replaces any storyline in progress.
   // "compare" runs come from the AI models page: always the AI, never a script.
   const compare = body.compare === true;
-  const match = compare || isMeetAsk(last) ? null : matchScript(last, fan, scripts, usedScripts);
+  const match = compare || anyMeet || pending.length > 1 ? null : matchScript(last, fan, scripts, usedScripts);
   if (match) return stepReply(match.script, 0, fan, match.hit);
 
   // Otherwise a storyline in progress sends its next step.
@@ -50,16 +54,16 @@ export async function POST(req) {
 
   const expired = fan.sub === 'expired';
   const allowMeet = creator.meetPolicy === 'yes' && !!creator.meetAnswer;
-  const canSell = !expired && canSellNow(history) && !isMeetAsk(last);
+  const canSell = !expired && canSellNow(history) && !meetOnly;
   const model = pickModel(fan.lang, body.model);
   const key = process.env.OPENROUTER_API_KEY;
 
   if (!key) {
     const pool = mockReplies[fan.lang] || mockReplies.EN;
-    if (isMeetAsk(last) && allowMeet) {
+    if (meetOnly && allowMeet) {
       return NextResponse.json({ type: 'ai', storyEnded, mock: true, model, text: creator.meetAnswer, offer: null, tokensIn: 0, tokensOut: 0, cost: 0 });
     }
-    if (isMeetAsk(last)) {
+    if (meetOnly) {
       const meetPool = mockMeet[fan.lang] || mockMeet.EN;
       return NextResponse.json({ type: 'ai', storyEnded, mock: true, model, text: fillScript(meetPool[(countMeetAsks(history) - 1) % meetPool.length], fan), offer: null, tokensIn: 0, tokensOut: 0, cost: 0 });
     }
@@ -76,7 +80,7 @@ export async function POST(req) {
   const fallbacks = (process.env.MODEL_FALLBACKS || '').split(',').map((x) => x.trim()).filter(Boolean);
   const payload = {
     ...(fallbacks.length ? { models: [model, ...fallbacks.filter((x) => x !== model)].slice(0, 3) } : { model }),
-    ...(isMeetAsk(last)
+    ...(meetOnly
       ? { messages: buildMeetMessages(persona, fan, history), max_tokens: 120, temperature: 0.6 }
       : { messages: buildMessages(persona, fan, history, { canSell }), max_tokens: 200, temperature: 0.8 }),
     usage: { include: true },
@@ -110,7 +114,7 @@ export async function POST(req) {
     reportedCost += Number(data.usage?.cost) || 0;
     const raw = data.choices?.[0]?.message?.content?.trim() || '';
     ({ text, offer } = extractOffer(raw, canSell ? fresh : []));
-    if (text && !checkReply(text, { allowMeet: allowMeet && isMeetAsk(last) })) break;
+    if (text && !checkReply(text, { allowMeet: allowMeet && anyMeet })) break;
     text = '';
   }
   if (!text) return NextResponse.json({ type: 'error', error: 'The AI could not write a safe reply' }, { status: 502 });
