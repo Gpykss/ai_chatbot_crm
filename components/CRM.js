@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   creators as defaultCreators, initialFans, scripts as defaultScripts, normalizeScript, incoming,
-  langName, langsOf, personaTemplate, workspaces, availableAccounts,
+  PROFILE_QUESTIONS, langName, langsOf, personaTemplate, workspaces, availableAccounts,
 } from '@/lib/data';
 
 const needsReply = (f) => f.msgs[f.msgs.length - 1]?.from === 'fan';
@@ -116,7 +116,7 @@ export default function CRM() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fan: { id: f.id, name: f.name, lang: f.lang, creator: f.creator, notes: f.notes, tags: f.tags, spend: f.spend, sub: f.sub, memory: (f.memory || []).map((x) => x.text) },
-          creator: { meetPolicy: c.meetPolicy || 'no', meetAnswer: c.meetAnswer || '', name: c.name, langs: langsOf(c), tone: c.tone, content: c.content, limits: c.limits, examples: c.examples || '', vault: c.vault || [] },
+          creator: { profile: c.profile || null, meetPolicy: c.meetPolicy || 'no', meetAnswer: c.meetAnswer || '', name: c.name, langs: langsOf(c), tone: c.tone, content: c.content, limits: c.limits, examples: c.examples || '', vault: c.vault || [] },
           scripts: d.scripts, story: d.story[f.id] || null, offered: f.msgs.filter((m) => m.vaultId).map((m) => m.vaultId),
           history: f.msgs.map((m) => ({ from: m.from, text: m.text, offer: !!m.price })),
           usedScripts: d.used[f.id] || [], mockIndex: d.mockIdx[f.id] || 0, model: d.models[f.lang] || undefined,
@@ -871,14 +871,15 @@ function CreatorSheet({ item, onSave, onRemove, onClose }) {
         <div className="field"><label className="label" htmlFor="c-sells">What she sells</label><textarea id="c-sells" rows={4} value={f.content} onChange={set('content')} placeholder="Shower and gym sets, lingerie, customs from $60" />
           <span className="hint">The AI only offers what&apos;s listed here, at these prices.</span></div>
         <div className="field"><label className="label" htmlFor="c-lim">Hard limits</label><textarea id="c-lim" rows={3} value={f.limits} onChange={set('limits')} placeholder="No face in customs. No meetups." />
-          <span className="hint">Things she never does or says. Meetups, under-18 talk and sharing location are always blocked, on top of these.</span></div>
+          <span className="hint">Things she never does or says. Under-18 talk is always blocked, on top of these.</span></div>
+        <ProfileQuestions value={f.profile || {}} onChange={(profile) => setF({ ...f, profile })} />
         <div className="field"><label className="label" htmlFor="c-meet">Meetups</label>
           <select id="c-meet" value={f.meetPolicy || 'no'} onChange={set('meetPolicy')}>
             <option value="no">No, she doesn&apos;t meet fans</option>
             <option value="yes">Yes, reply with the answer below</option>
           </select>
           {f.meetPolicy === 'yes' && <textarea aria-label="What to tell a fan who asks to meet" rows={2} value={f.meetAnswer || ''} onChange={set('meetAnswer')} placeholder="Yes babe, but message me on Telegram first: @yourhandle" />}
-          <span className="hint">When a fan asks to meet, the AI answers straight away with this, in his language. {f.meetPolicy === 'yes' ? 'OnlyFans’ rules don’t allow sending fans to other apps, so this can get the account flagged.' : ''}</span></div>
+          <span className="hint">When a fan asks to meet, the AI answers straight away with this, in his language. {f.meetPolicy === 'yes' ? 'Add her handles under Get to know her → Contact & socials, so she can give them when fans ask how to add her. OnlyFans’ rules don’t allow sending fans to other apps, so this can get the account flagged.' : ''}</span></div>
         <div className="field"><div className="row between"><span className="label">Content vault · {f.vault.length}</span><button type="button" className="btn sm" onClick={addItem}>Add item</button></div>
           <span className="hint">Her ready-made content, newest first. The AI only sells what&apos;s here and describes it from your description, since it can&apos;t see the media. In the full build this syncs from her OnlyFans vault.</span>
           {f.vault.map((x, i) => (
@@ -1107,7 +1108,7 @@ function ModelsPage({ d, save, rerender, toast }) {
         const res = await fetch('/api/reply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
           compare: true, model: id,
           fan: { id: 'compare', name: fanName, lang, creator: c.id, notes: '', tags: [], spend: 120, sub: 'active', memory: [] },
-          creator: { meetPolicy: c.meetPolicy || 'no', meetAnswer: c.meetAnswer || '', name: c.name, langs: langsOf(c).includes(lang) ? langsOf(c) : [lang, ...langsOf(c)], tone: c.tone, content: c.content, limits: c.limits, examples: c.examples || '', vault: [] },
+          creator: { profile: c.profile || null, meetPolicy: c.meetPolicy || 'no', meetAnswer: c.meetAnswer || '', name: c.name, langs: langsOf(c).includes(lang) ? langsOf(c) : [lang, ...langsOf(c)], tone: c.tone, content: c.content, limits: c.limits, examples: c.examples || '', vault: [] },
           scripts: [], history: [{ from: 'fan', text: msg.trim(), offer: false }],
         }) });
         const r = await res.json();
@@ -1183,6 +1184,39 @@ function ModelsPage({ d, save, rerender, toast }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ---------------- "Get to know her" questionnaire ---------------- */
+function ProfileQuestions({ value, onChange }) {
+  const groups = [...new Set(PROFILE_QUESTIONS.map((q) => q.group))];
+  const [open, setOpen] = useState(groups[0]);
+  const filled = PROFILE_QUESTIONS.filter((q) => String(value[q.key] || '').trim()).length;
+  const setV = (k) => (e) => onChange({ ...value, [k]: e.target.value });
+  return (
+    <div className="field">
+      <span className="label">Get to know her · {filled}/{PROFILE_QUESTIONS.length} answered</span>
+      <span className="hint">The AI answers fans from these, in every chat. Anything left empty, it keeps vague instead of making things up.</span>
+      {groups.map((g) => (
+        <div key={g} style={{ border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden' }}>
+          <button type="button" aria-expanded={open === g} onClick={() => setOpen(open === g ? '' : g)} style={{ width: '100%', display: 'flex', justifyContent: 'space-between', padding: '12px 14px', fontWeight: 600, textAlign: 'left' }}>
+            <span>{g}</span><span className="small">{PROFILE_QUESTIONS.filter((q) => q.group === g && String(value[q.key] || '').trim()).length}/{PROFILE_QUESTIONS.filter((q) => q.group === g).length}</span>
+          </button>
+          {open === g && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '0 14px 14px' }}>
+              {PROFILE_QUESTIONS.filter((q) => q.group === g).map((q) => (
+                <div key={q.key} className="field">
+                  <label className="label" htmlFor={`pq-${q.key}`} style={{ textTransform: 'none', letterSpacing: 0, fontFamily: 'inherit', fontSize: 13, color: 'var(--fg)' }}>{q.q}</label>
+                  {q.options
+                    ? <select id={`pq-${q.key}`} value={value[q.key] || q.options[0][0]} onChange={setV(q.key)}>{q.options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+                    : <input id={`pq-${q.key}`} value={value[q.key] || ''} onChange={setV(q.key)} placeholder={q.ph} />}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

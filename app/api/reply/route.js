@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
-import { creators as defaultCreators, scripts as defaultScripts, mockReplies, normalizeScript } from '@/lib/data';
-import { pendingFan, buildMeetMessages, canSellNow, isYesToStory, isContentAsk, isMeetAsk, countMeetAsks, checkGuard, checkReply, matchScript, fillScript, pickModel, buildMessages, extractOffer } from '@/lib/engine';
+import { PROFILE_QUESTIONS, creators as defaultCreators, scripts as defaultScripts, mockReplies, normalizeScript } from '@/lib/data';
+import { socialsOf, isContactAsk, isRefusal, pendingFan, buildMeetMessages, canSellNow, isYesToStory, isContentAsk, isMeetAsk, countMeetAsks, checkGuard, checkReply, matchScript, fillScript, pickModel, buildMessages, extractOffer } from '@/lib/engine';
 
 const clip = (v, n) => String(v ?? '').slice(0, n);
+const cleanProfile = (p) => (p && typeof p === 'object'
+  ? Object.fromEntries(PROFILE_QUESTIONS.map((x) => [x.key, clip(p[x.key], 400)]).filter(([, v]) => v.trim()))
+  : null);
 
 // One autopilot step: safety check → script → AI.
 // The dashboard sends the current persona and scripts, because the admin can edit them.
@@ -15,7 +18,7 @@ export async function POST(req) {
   const sent = body.creator;
   const base = defaultCreators.find((c) => c.id === fan?.creator);
   const creator = sent
-    ? { meetPolicy: sent.meetPolicy === 'yes' ? 'yes' : 'no', meetAnswer: clip(sent.meetAnswer, 300).trim(), name: clip(sent.name, 80), langs: Array.isArray(sent.langs) ? sent.langs.filter((l) => ['EN', 'IT', 'FI', 'EL'].includes(l)) : [], tone: clip(sent.tone, 600), content: clip(sent.content, 600), limits: clip(sent.limits, 600), examples: clip(sent.examples, 2000),
+    ? { profile: cleanProfile(sent.profile), meetPolicy: sent.meetPolicy === 'yes' ? 'yes' : 'no', meetAnswer: clip(sent.meetAnswer, 300).trim(), name: clip(sent.name, 80), langs: Array.isArray(sent.langs) ? sent.langs.filter((l) => ['EN', 'IT', 'FI', 'EL'].includes(l)) : [], tone: clip(sent.tone, 600), content: clip(sent.content, 600), limits: clip(sent.limits, 600), examples: clip(sent.examples, 2000),
         vault: (Array.isArray(sent.vault) ? sent.vault : []).slice(0, 30).map((x) => ({ id: clip(x.id, 40), title: clip(x.title, 80), type: clip(x.type, 40), price: Number(x.price) || 0, added: clip(x.added, 20), desc: clip(x.desc, 300) })) }
     : base;
   if (!creator) return NextResponse.json({ type: 'error', error: 'Unknown creator' }, { status: 400 });
@@ -61,7 +64,7 @@ export async function POST(req) {
   if (!key) {
     const pool = mockReplies[fan.lang] || mockReplies.EN;
     if (meetOnly && allowMeet) {
-      return NextResponse.json({ type: 'ai', storyEnded, mock: true, model, text: creator.meetAnswer, offer: null, tokensIn: 0, tokensOut: 0, cost: 0 });
+      return NextResponse.json({ type: 'ai', storyEnded, mock: true, model, text: pending.some(isContactAsk) ? (socialsOf(creator).length ? `Add me babe 😘 ${socialsOf(creator)[0].split(': ')[1]}` : "Let's keep it right here for now babe 😘 I'm all yours in this chat") : creator.meetAnswer, offer: null, tokensIn: 0, tokensOut: 0, cost: 0 });
     }
     if (meetOnly) {
       const meetPool = mockMeet[fan.lang] || mockMeet.EN;
@@ -114,7 +117,8 @@ export async function POST(req) {
     reportedCost += Number(data.usage?.cost) || 0;
     const raw = data.choices?.[0]?.message?.content?.trim() || '';
     ({ text, offer } = extractOffer(raw, canSell ? fresh : []));
-    if (text && !checkReply(text, { allowMeet: allowMeet && anyMeet })) break;
+    // A refusal ("I can't help with that") is thrown away and written again, like a broken rule.
+    if (text && !isRefusal(text) && !checkReply(text, { allowMeet: allowMeet && anyMeet })) break;
     text = '';
   }
   if (!text) return NextResponse.json({ type: 'error', error: 'The AI could not write a safe reply' }, { status: 502 });
